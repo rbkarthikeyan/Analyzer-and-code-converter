@@ -2495,11 +2495,14 @@ def save_migration_state(state: RepoAnalysisState) -> RepoAnalysisState:
         else:
             logger.info("Constructor and interface consistency validation passed")
         
+        # Generate timestamp for unique branch name
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        
         # Create state structure for migration operations
         migration_state = {
             "repo_url": state.get("repo_url", ""),
             "repo_path": state.get("repo_path", ""),
-            "feature_branch_name": "feature/kafka-to-servicebus",
+            "feature_branch_name": f"feature/kafka-to-servicebus-{timestamp}",
             "kafka_inventory": filtered_inventory,
             "code_diffs": filtered_diffs,
             "stats": {

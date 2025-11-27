@@ -3,6 +3,7 @@ import re
 import json
 import subprocess
 import logging
+import time
 from typing import Dict, Any, List, Tuple
 from shared_state import SharedStateManager, MigrationStats, validate_required_state
 
@@ -17,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def create_feature_branch(repo_path: str, branch_name: str = "feature/kafka-to-servicebus") -> Dict[str, Any]:
+def create_feature_branch(repo_path: str, branch_name: str) -> Dict[str, Any]:
     """
     Create or switch to a feature branch for migration changes
     
@@ -1459,7 +1460,7 @@ def run_migration_operations(create_branch: bool = True, apply_updates: bool = T
     state = state_manager.load_state()
     
     # Validate required state
-    required_keys = ["repo_path"]
+    required_keys = ["repo_path", "feature_branch_name"]
     if not validate_required_state(state, required_keys):
         error_msg = "Invalid state. Missing required information."
         print(f"[ERROR] {error_msg}")
@@ -1467,7 +1468,7 @@ def run_migration_operations(create_branch: bool = True, apply_updates: bool = T
         return overall_result
     
     repo_path = state["repo_path"]
-    branch_name = state.get("feature_branch_name", "feature/kafka-to-servicebus")
+    branch_name = state["feature_branch_name"]
     
     print("[INFO] Starting Migration Operations")
     print("=" * 50)
