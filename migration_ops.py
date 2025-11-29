@@ -1254,6 +1254,43 @@ def commit_and_push_changes(repo_path: str, applied_files: List[str]) -> bool:
                 logger.error(f"Failed to stage {file_path}: {output}")
                 return False
         
+        # Configure Git user identity if not already set
+        try:
+            # Check if user.name and user.email are configured
+            name_result = subprocess.run(
+                ["git", "config", "user.name"], 
+                cwd=repo_path, 
+                capture_output=True, 
+                text=True
+            )
+            email_result = subprocess.run(
+                ["git", "config", "user.email"], 
+                cwd=repo_path, 
+                capture_output=True, 
+                text=True
+            )
+            
+            # Set default values if not configured
+            if name_result.returncode != 0 or not name_result.stdout.strip():
+                subprocess.run(
+                    ["git", "config", "user.name", "Migration Bot"],
+                    cwd=repo_path,
+                    check=True
+                )
+                logger.info("Configured Git user.name as 'Migration Bot'")
+            
+            if email_result.returncode != 0 or not email_result.stdout.strip():
+                subprocess.run(
+                    ["git", "config", "user.email", "migration-bot@example.com"],
+                    cwd=repo_path,
+                    check=True
+                )
+                logger.info("Configured Git user.email as 'migration-bot@example.com'")
+                
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to configure Git identity: {e}")
+            # Continue anyway - the commit might still work if global config exists
+        
         # Commit the changes
         commit_msg = f"Migrate Kafka to Azure Service Bus ({len(applied_files)} files updated)"
         success, output = safe_git_operation("commit -m", repo_path, commit_msg)
