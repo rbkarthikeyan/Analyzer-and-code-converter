@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Repository configuration
 DEFAULT_REPO_URL = "https://github.com/prashantkumarll/dotnetcore-kafka-integration.git"
-DEFAULT_BRANCH = "ai-test-coverage-20251124_174520"
+DEFAULT_BRANCH = "ai-test-coverage-20251129_001309"
 #DEFAULT_BRANCH = "ai-test-coverage-20251124_085518"
 #DEFAULT_BRANCH = "main"
 
@@ -40,11 +40,13 @@ DEFAULT_BRANCH = "ai-test-coverage-20251124_174520"
 class AnalysisConfig:
     """Configuration class for analysis parameters"""
     max_chunk_size: int = 4000
-    max_workers: int = 5
-    excluded_extensions: tuple = (".png", ".jpg", ".exe", ".dll", ".bin", ".zip", ".tar", ".gz")
+    max_workers: int = 15  # Increased from 10 to 15 for better parallelism
+    excluded_extensions: tuple = (".png", ".jpg", ".exe", ".dll", ".bin", ".zip", ".tar", ".gz", ".md")
+    excluded_files: tuple = (".gitignore", ".gitignore copy")
+    excluded_patterns: tuple = ("test-coverage-report-*.json",)
     included_file_patterns: list = None
-    ai_timeout: int = 90  # Increased for better complex file handling
-    retry_attempts: int = 3
+    ai_timeout: int = 60  # Reduced from 90 to 60 seconds for faster processing
+    retry_attempts: int = 2  # Reduced from 3 to 2 to fail faster on problematic files
     
     def __post_init__(self):
         if self.included_file_patterns is None:
@@ -232,6 +234,15 @@ def get_updated_state_with_code_chunks(state: RepoAnalysisState) -> RepoAnalysis
                 if file_name.lower().endswith(config.excluded_extensions):
                     continue
                 
+                # Skip specific excluded files
+                if file_name in config.excluded_files:
+                    continue
+                
+                # Skip files matching excluded patterns
+                import fnmatch
+                if any(fnmatch.fnmatch(file_name, pattern) for pattern in config.excluded_patterns):
+                    continue
+                
                 # Check if file matches included patterns (if specified)
                 if config.included_file_patterns:
                     from fnmatch import fnmatch
@@ -319,6 +330,16 @@ async def analyze_and_scan_kafka_async(state: Dict[str, Any]) -> Dict[str, Any]:
             for f in files:
                 if f.lower().endswith(config.excluded_extensions):
                     continue
+                
+                # Skip specific excluded files
+                if f in config.excluded_files:
+                    continue
+                
+                # Skip files matching excluded patterns
+                import fnmatch
+                if any(fnmatch.fnmatch(f, pattern) for pattern in config.excluded_patterns):
+                    continue
+                
                 candidate_files.append(os.path.join(root, f))
 
         sem = asyncio.Semaphore(config.max_workers)
@@ -409,12 +430,12 @@ CODE:
                         logger.warning(f"Error analyzing {rel_file} (attempt {attempt + 1}): {str(e)}")
                         if attempt == config.retry_attempts - 1:
                             return {}
-                        await asyncio.sleep(1)  # Brief delay before retry
+                        await asyncio.sleep(0.3)  # Reduced delay from 1s to 0.3s
             
             return {}
 
         # Process files in batches to avoid overwhelming the API
-        batch_size = min(config.max_workers * 2, 10)
+        batch_size = min(config.max_workers * 2, 20)  # Increased from 10 to 20
         all_results = []
         
         for i in range(0, len(candidate_files), batch_size):
@@ -2247,17 +2268,17 @@ ORIGINAL CODE:
                         logger.error(f"All timeout retries failed for {rel_file}")
                         return {"file": rel_file, "diff": "Error: Timeout during diff generation"}
                     else:
-                        await asyncio.sleep(2)  # Brief pause before retry
+                        await asyncio.sleep(0.5)  # Reduced delay from 2s to 0.5s
                 except Exception as e:
                     logger.warning(f"Error generating diff for {rel_file} (attempt {attempt + 1}): {str(e)}")
                     if attempt == config.retry_attempts - 1:
                         return {"file": rel_file, "diff": f"Error generating diff: {e}"}
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.3)  # Reduced delay from 1s to 0.3s
 
         return {"file": rel_file, "diff": "Error: All retry attempts failed"}
 
     # Process in batches
-    batch_size = min(config.max_workers, 5)
+    batch_size = min(config.max_workers, 10)  # Increased from 5 to 10 for faster diff generation
     all_diffs = []
     
     for i in range(0, len(inventory), batch_size):

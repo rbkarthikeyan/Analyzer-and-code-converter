@@ -4,6 +4,10 @@ import json
 import subprocess
 import logging
 import time
+import glob
+import shutil
+import sys
+import stat
 from typing import Dict, Any, List, Tuple
 from shared_state import SharedStateManager, MigrationStats, validate_required_state
 
@@ -1243,11 +1247,22 @@ def commit_and_push_changes(repo_path: str, applied_files: List[str]) -> bool:
         
         if success:
             logger.info(f"Successfully pushed branch '{current_branch}' to origin")
+            
+            # Clean up migration files after successful push
+            cleanup_result = cleanup_migration_files()
+            if cleanup_result["success"]:
+                logger.info("Migration cleanup completed successfully")
+            else:
+                logger.warning("Migration completed but cleanup had issues:")
+                for error in cleanup_result["errors"]:
+                    logger.warning(f"  - {error}")
+            
             return True
         else:
             logger.error(f"Failed to push to origin: {output}")
             # Still return True since commit succeeded, just warn about push failure
             logger.warning("Commit succeeded but push failed - you may need to push manually")
+            logger.info("Skipping cleanup since push failed")
             return True
             
     except Exception as e:
@@ -1429,6 +1444,114 @@ def apply_code_updates(repo_path: str, code_diffs: List[Dict], stats: MigrationS
         result["errors"].append(error_msg)
         return result
 
+def cleanup_migration_files() -> Dict[str, Any]:
+    """
+    Clean up migration-related files and folders after successful git push
+    
+    Removes:
+    - cloned_repo folder
+    - migration_state.json file
+    - migration-report.md file (with timestamp variations)
+    - All .log files in current directory
+    
+    Returns:
+        Dict containing cleanup results
+    """
+    result = {
+        "success": True,
+        "cleaned_items": [],
+        "failed_items": [],
+        "errors": []
+    }
+    
+    logger.info("Starting cleanup of migration files...")
+    
+    try:
+        # Items to clean up
+        cleanup_items = [
+            ("folder", "cloned_repo"),
+            ("file", "migration_state.json"),
+        ]
+        
+        # Add all migration report files (with any timestamp)
+        import glob
+        report_files = glob.glob("migration-report*.md")
+        for report_file in report_files:
+            cleanup_items.append(("file", report_file))
+        
+        # Add all .log files
+        log_files = glob.glob("*.log")
+        for log_file in log_files:
+            cleanup_items.append(("file", log_file))
+        
+        # Process each cleanup item
+        for item_type, item_path in cleanup_items:
+            try:
+                if item_type == "folder" and os.path.exists(item_path):
+                    if os.path.isdir(item_path):
+                        # Handle Windows read-only files in git folders
+                        def handle_remove_readonly(func, path, exc):
+                            """Error handler for Windows read-only files"""
+                            import stat
+                            if os.path.exists(path):
+                                os.chmod(path, stat.S_IWRITE)
+                                func(path)
+                        
+                        shutil.rmtree(item_path, onerror=handle_remove_readonly)
+                        result["cleaned_items"].append(f"Folder: {item_path}")
+                        logger.info(f"Removed folder: {item_path}")
+                    else:
+                        logger.warning(f"Expected folder but found file: {item_path}")
+                        
+                elif item_type == "file" and os.path.exists(item_path):
+                    if os.path.isfile(item_path):
+                        # Skip files that are currently in use (like active log files)
+                        if item_path.endswith('.log'):
+                            # Try to close the current log handler if it's using this file
+                            try:
+                                # For active log files, just mark as skipped instead of failing
+                                if item_path == 'migration_operations.log':
+                                    logger.info(f"Skipping active log file: {item_path}")
+                                    continue
+                            except:
+                                pass
+                        
+                        os.remove(item_path)
+                        result["cleaned_items"].append(f"File: {item_path}")
+                        logger.info(f"Removed file: {item_path}")
+                    else:
+                        logger.warning(f"Expected file but found folder: {item_path}")
+                        
+            except Exception as e:
+                error_msg = f"Failed to remove {item_type} '{item_path}': {str(e)}"
+                logger.error(error_msg)
+                result["failed_items"].append(f"{item_type}: {item_path}")
+                result["errors"].append(error_msg)
+                result["success"] = False
+        
+        # Log summary
+        if result["cleaned_items"]:
+            logger.info(f"Successfully cleaned {len(result['cleaned_items'])} items:")
+            for item in result["cleaned_items"]:
+                logger.info(f"  - {item}")
+        
+        if result["failed_items"]:
+            logger.warning(f"Failed to clean {len(result['failed_items'])} items:")
+            for item in result["failed_items"]:
+                logger.warning(f"  - {item}")
+        
+        if not result["cleaned_items"] and not result["failed_items"]:
+            logger.info("No migration files found to clean up")
+        
+        return result
+        
+    except Exception as e:
+        error_msg = f"Unexpected error during cleanup: {str(e)}"
+        logger.error(error_msg)
+        result["errors"].append(error_msg)
+        result["success"] = False
+        return result
+
 def run_migration_operations(create_branch: bool = True, apply_updates: bool = True) -> Dict[str, Any]:
     """
     Run both branch creation and code updates operations
@@ -1577,11 +1700,26 @@ def main():
             result = run_migration_operations(create_branch=False, apply_updates=True)
         elif operation == "both" or operation == "all":
             result = run_migration_operations(create_branch=True, apply_updates=True)
+        elif operation == "cleanup":
+            print("[INFO] Running cleanup operation...")
+            cleanup_result = cleanup_migration_files()
+            if cleanup_result["success"]:
+                print(f"[SUCCESS] Cleanup completed. Removed {len(cleanup_result['cleaned_items'])} items.")
+                for item in cleanup_result["cleaned_items"]:
+                    print(f"  - {item}")
+            else:
+                print(f"[WARNING] Cleanup completed with {len(cleanup_result['failed_items'])} failures:")
+                for item in cleanup_result["failed_items"]:
+                    print(f"  - Failed: {item}")
+                for error in cleanup_result["errors"]:
+                    print(f"  - Error: {error}")
+            sys.exit(0 if cleanup_result["success"] else 1)
         else:
-            print("Usage: python migration_ops.py [branch|apply|both]")
-            print("  branch - Only create/switch to feature branch")
-            print("  apply  - Only apply code updates")
-            print("  both   - Run both operations (default)")
+            print("Usage: python migration_ops.py [branch|apply|both|cleanup]")
+            print("  branch  - Only create/switch to feature branch")
+            print("  apply   - Only apply code updates")
+            print("  both    - Run both operations (default)")
+            print("  cleanup - Clean up migration files and folders")
             return
     else:
         # Default: run both operations
