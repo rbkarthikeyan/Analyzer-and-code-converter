@@ -11,6 +11,13 @@ import stat
 from typing import Dict, Any, List, Tuple
 from shared_state import SharedStateManager, MigrationStats, validate_required_state
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # Handle case where python-dotenv is not installed
+    def load_dotenv():
+        pass
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +28,32 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+def load_github_pat_token() -> str:
+    """
+    Load GitHub PAT token from environment variables.
+    Tries to load from .env file first, then falls back to system environment.
+    
+    Returns:
+        str: The GitHub PAT token, or None if not found
+    """
+    try:
+        # Load .env file if it exists
+        load_dotenv()
+        
+        # Try to get PAT token from environment
+        pat_token = os.getenv('GITHUB_PAT_TOKEN')
+        
+        if not pat_token:
+            logger.warning("GITHUB_PAT_TOKEN not found in environment variables")
+            logger.warning("Please set GITHUB_PAT_TOKEN in your .env file or system environment")
+            return None
+            
+        return pat_token
+        
+    except Exception as e:
+        logger.error(f"Error loading PAT token from environment: {e}")
+        return None
 
 def create_feature_branch(repo_path: str, branch_name: str) -> Dict[str, Any]:
     """
@@ -1242,8 +1275,59 @@ def commit_and_push_changes(repo_path: str, applied_files: List[str]) -> bool:
             logger.error(f"Failed to get current branch: {e}")
             return False
         
-        # Push to origin
-        success, output = safe_git_operation("push origin", repo_path, current_branch)
+        # Push to origin with PAT token authentication
+        pat_token = load_github_pat_token()
+        
+        if not pat_token:
+            logger.error("GitHub PAT token not available - cannot push to repository")
+            logger.error("Please set GITHUB_PAT_TOKEN in your .env file or system environment")
+            return False
+        
+        # Get the current remote URL
+        try:
+            remote_url = subprocess.check_output(
+                ["git", "remote", "get-url", "origin"], 
+                cwd=repo_path, 
+                text=True
+            ).strip()
+            
+            # Convert to authenticated URL if it's a GitHub repository
+            if "github.com" in remote_url:
+                if remote_url.startswith("https://github.com/"):
+                    # Extract owner/repo from URL
+                    repo_part = remote_url.replace("https://github.com/", "")
+                    auth_url = f"https://{pat_token}@github.com/{repo_part}"
+                elif remote_url.startswith("git@github.com:"):
+                    # Convert SSH to HTTPS with PAT
+                    repo_part = remote_url.replace("git@github.com:", "").replace(".git", "")
+                    auth_url = f"https://{pat_token}@github.com/{repo_part}.git"
+                else:
+                    auth_url = remote_url
+                
+                # Temporarily set the remote URL to use PAT token
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", auth_url],
+                    cwd=repo_path,
+                    check=True
+                )
+                
+                # Push with the authenticated URL
+                success, output = safe_git_operation("push origin", repo_path, current_branch)
+                
+                # Restore original remote URL
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", remote_url],
+                    cwd=repo_path,
+                    check=True
+                )
+            else:
+                # Not a GitHub repository, use original method
+                success, output = safe_git_operation("push origin", repo_path, current_branch)
+                
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to get or set remote URL: {e}")
+            # Fallback to original method
+            success, output = safe_git_operation("push origin", repo_path, current_branch)
         
         if success:
             logger.info(f"Successfully pushed branch '{current_branch}' to origin")
