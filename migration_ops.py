@@ -1368,22 +1368,11 @@ def commit_and_push_changes(repo_path: str, applied_files: List[str]) -> bool:
         
         if success:
             logger.info(f"Successfully pushed branch '{current_branch}' to origin")
-            
-            # Clean up migration files after successful push
-            cleanup_result = cleanup_migration_files()
-            if cleanup_result["success"]:
-                logger.info("Migration cleanup completed successfully")
-            else:
-                logger.warning("Migration completed but cleanup had issues:")
-                for error in cleanup_result["errors"]:
-                    logger.warning(f"  - {error}")
-            
             return True
         else:
             logger.error(f"Failed to push to origin: {output}")
             # Still return True since commit succeeded, just warn about push failure
             logger.warning("Commit succeeded but push failed - you may need to push manually")
-            logger.info("Skipping cleanup since push failed")
             return True
             
     except Exception as e:
@@ -1799,8 +1788,32 @@ def run_migration_operations(create_branch: bool = True, apply_updates: bool = T
     
     if overall_result["success"]:
         print("\n[SUCCESS] Migration operations completed successfully!")
+        
+        # Clean up migration files at the very end, after all state saving is complete
+        if apply_success and overall_result.get("apply_result", {}).get("applied_files"):
+            logger.info("Performing final cleanup after successful migration...")
+            print("[INFO] 🧹 Running cleanup to remove migration files...")
+            cleanup_result = cleanup_migration_files()
+            if cleanup_result["success"]:
+                logger.info("Migration cleanup completed successfully")
+                print(f"[INFO] ✅ Cleanup completed - removed {len(cleanup_result['cleaned_items'])} items")
+                for item in cleanup_result["cleaned_items"]:
+                    if item.startswith("Folder: "):
+                        print(f"  - 📁 {item}")
+                    else:
+                        print(f"  - 📄 {item}")
+            else:
+                logger.warning("Migration completed but cleanup had issues:")
+                print("[WARNING] ⚠️ Cleanup completed with some issues:")
+                for error in cleanup_result["errors"]:
+                    logger.warning(f"  - {error}")
+                    print(f"  - {error}")
+                if cleanup_result["failed_items"]:
+                    for item in cleanup_result["failed_items"]:
+                        print(f"  - Failed to remove: {item}")
     else:
         print("\n[ERROR] Migration operations failed!")
+        print("[INFO] Skipping cleanup due to migration failure")
     
     return overall_result
 
