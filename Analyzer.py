@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Repository configuration
 DEFAULT_REPO_URL = "https://github.com/prashantkumarll/dotnetcore-kafka-integration.git"
-DEFAULT_BRANCH = "ai-test-coverage-20251129_001309"
+DEFAULT_BRANCH = "ai-test-coverage-20251203_105815"
 #DEFAULT_BRANCH = "ai-test-coverage-20251124_085518"
 #DEFAULT_BRANCH = "main"
 
@@ -40,13 +40,13 @@ DEFAULT_BRANCH = "ai-test-coverage-20251129_001309"
 class AnalysisConfig:
     """Configuration class for analysis parameters"""
     max_chunk_size: int = 4000
-    max_workers: int = 15  # Increased from 10 to 15 for better parallelism
+    max_workers: int = 25  # Increased from 15 to 25 for maximum parallelism
     excluded_extensions: tuple = (".png", ".jpg", ".exe", ".dll", ".bin", ".zip", ".tar", ".gz", ".md")
     excluded_files: tuple = (".gitignore", ".gitignore copy")
     excluded_patterns: tuple = ("test-coverage-report-*.json",)
     included_file_patterns: list = None
-    ai_timeout: int = 60  # Reduced from 90 to 60 seconds for faster processing
-    retry_attempts: int = 2  # Reduced from 3 to 2 to fail faster on problematic files
+    ai_timeout: int = 75  # Increased from 60s to reduce timeout failures that waste time
+    retry_attempts: int = 1  # Reduced from 2 to 1 to fail faster on problematic files
     
     def __post_init__(self):
         if self.included_file_patterns is None:
@@ -435,7 +435,7 @@ CODE:
             return {}
 
         # Process files in batches to avoid overwhelming the API
-        batch_size = min(config.max_workers * 2, 20)  # Increased from 10 to 20
+        batch_size = min(config.max_workers * 2, 35)  # Increased from 20 to 35 for better throughput
         all_results = []
         
         for i in range(0, len(candidate_files), batch_size):
@@ -2268,7 +2268,7 @@ ORIGINAL CODE:
                         logger.error(f"All timeout retries failed for {rel_file}")
                         return {"file": rel_file, "diff": "Error: Timeout during diff generation"}
                     else:
-                        await asyncio.sleep(0.5)  # Reduced delay from 2s to 0.5s
+                        await asyncio.sleep(0.1)  # Reduced delay from 0.2s to 0.1s for faster retries
                 except Exception as e:
                     logger.warning(f"Error generating diff for {rel_file} (attempt {attempt + 1}): {str(e)}")
                     if attempt == config.retry_attempts - 1:
@@ -2278,7 +2278,7 @@ ORIGINAL CODE:
         return {"file": rel_file, "diff": "Error: All retry attempts failed"}
 
     # Process in batches
-    batch_size = min(config.max_workers, 10)  # Increased from 5 to 10 for faster diff generation
+    batch_size = min(config.max_workers, 20)  # Increased from 10 to 20 for faster diff generation
     all_diffs = []
     
     for i in range(0, len(inventory), batch_size):
